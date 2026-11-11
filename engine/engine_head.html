@@ -1,0 +1,467 @@
+<!doctype html><meta charset="utf-8">
+<style>html,body{margin:0;background:#000}canvas{display:block}
+@font-face{font-family:Mont;font-weight:900;src:url('/node_modules/@fontsource/montserrat/files/montserrat-latin-900-normal.woff2') format('woff2');unicode-range:U+0000-00FF,U+2000-206F}
+@font-face{font-family:Mont;font-weight:900;src:url('/node_modules/@fontsource/montserrat/files/montserrat-latin-ext-900-normal.woff2') format('woff2');unicode-range:U+0100-024F}
+@font-face{font-family:Mont;font-weight:700;src:url('/node_modules/@fontsource/montserrat/files/montserrat-latin-700-normal.woff2') format('woff2');unicode-range:U+0000-00FF,U+2000-206F}
+@font-face{font-family:Mont;font-weight:700;src:url('/node_modules/@fontsource/montserrat/files/montserrat-latin-ext-700-normal.woff2') format('woff2');unicode-range:U+0100-024F}
+@font-face{font-family:Orb;font-weight:900;src:url('/node_modules/@fontsource/orbitron/files/orbitron-latin-900-normal.woff2') format('woff2')}
+</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
+
+const Q = new URLSearchParams(location.search);
+const W = +Q.get('w') || 540, H = +Q.get('h') || 960;
+const renderer = new THREE.WebGLRenderer({antialias: true, preserveDrawingBuffer: true});
+renderer.setPixelRatio(1); renderer.setSize(W, H);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0d0d14);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+const cam = new THREE.PerspectiveCamera(45, W / H, 0.05, 80);
+const STYLE = 'flat2d';
+const DETS = {ps3:{sw:28,sh:18,cc:8,cr:20,cy:24,hw:32,hh:20}, ps1:{sw:8,sh:6,cc:2,cr:6,cy:8,hw:8,hh:5}, lowpoly:{sw:7,sh:5,cc:3,cr:6,cy:7,hw:8,hh:5}, toon:{sw:28,sh:18,cc:8,cr:20,cy:24,hw:32,hh:20}, clay:{sw:28,sh:18,cc:8,cr:20,cy:24,hw:32,hh:20}, flat2d:{sw:28,sh:18,cc:8,cr:20,cy:24,hw:32,hh:20}, mannequin:{sw:28,sh:18,cc:8,cr:20,cy:24,hw:32,hh:20}, blocky:{sw:28,sh:18,cc:8,cr:20,cy:24,hw:32,hh:20}};
+const DET = DETS[STYLE];
+const GM = new THREE.DataTexture(new Uint8Array([110,190,255]), 3, 1, THREE.RedFormat); GM.minFilter = GM.magFilter = THREE.NearestFilter; GM.needsUpdate = true;
+const clayBump = (() => { const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d'); const R = Math.random; for (let i = 0; i < 9000; i++) { const v = 90 + R() * 120; g.fillStyle = `rgb(${v},${v},${v})`; g.beginPath(); g.arc(R() * 256, R() * 256, 1 + R() * 3, 0, 7); g.fill(); } const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 3); return t; })();
+const MAT = {
+  ps3: (c, r, m, e) => new THREE.MeshStandardMaterial({color: c, roughness: r, metalness: m, ...e}),
+  mannequin: (c, r, m, e) => new THREE.MeshStandardMaterial({color: c, roughness: r, metalness: m, ...e}),
+  blocky: (c, r, m, e) => new THREE.MeshStandardMaterial({color: c, roughness: 0.35, metalness: 0, ...e}),
+  ps1: (c, r, m, e) => new THREE.MeshLambertMaterial({color: c, flatShading: true, ...e}),
+  lowpoly: (c, r, m, e) => new THREE.MeshStandardMaterial({color: c, roughness: 0.85, metalness: 0, flatShading: true, ...e}),
+  toon: (c, r, m, e) => new THREE.MeshToonMaterial({color: c, gradientMap: GM, ...e}),
+  clay: (c, r, m, e) => new THREE.MeshStandardMaterial({color: c, roughness: 1, metalness: 0, bumpMap: clayBump, bumpScale: 2.5, ...e}),
+  flat2d: (c, r, m, e) => new THREE.MeshBasicMaterial({color: c, ...e})
+};
+
+
+// ---------- helpers ----------
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const sm = x => { x = clamp(x); return x * x * (3 - 2 * x); };
+const lerp = (a, b, k) => a + (b - a) * k;
+function ctex(w, h, fn, rep) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; fn(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; if (STYLE === 'ps1') { t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; }
+  if (rep) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep[0], rep[1]); }
+  return t;
+}
+const std = (color, rough = 0.6, metal = 0, extra = {}) => MAT[STYLE](color, rough, metal, extra);
+function mesh(geo, mat, x = 0, y = 0, z = 0, cast = true, recv = true) {
+  const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = cast; m.receiveShadow = recv; return m;
+}
+const box = (w, h, d, mat, x, y, z, c = true) => mesh(new THREE.BoxGeometry(w, h, d), mat, x, y, z, c);
+const cyl = (r1, r2, h, mat, x, y, z, seg = DET.cy) => mesh(new THREE.CylinderGeometry(r1, r2, h, seg), mat, x, y, z);
+const sph = (r, mat, x, y, z, sx = 1, sy = 1, sz = 1) => { const m = mesh(new THREE.SphereGeometry(r, DET.sw, DET.sh), mat, x, y, z); m.scale.set(sx, sy, sz); return m; };
+const cap = (r, l, mat, x, y, z) => mesh(new THREE.CapsuleGeometry(r, l, DET.cc, DET.cr), mat, x, y, z);
+
+// ---------- textures ----------
+const woodTex = ctex(1024, 1024, (g, w, h) => {
+  const R = rng(3); const n = 10;
+  for (let i = 0; i < n; i++) {
+    const l = 120 + R() * 40; g.fillStyle = `hsl(28,${45 + R() * 10}%,${l - 70}%)`; g.fillStyle = `rgb(${150 + R() * 40 | 0},${100 + R() * 30 | 0},${62 + R() * 24 | 0})`;
+    g.fillRect(0, i * h / n, w, h / n);
+    for (let k = 0; k < 40; k++) { g.strokeStyle = `rgba(70,40,20,${0.05 + R() * 0.08})`; g.lineWidth = 1 + R() * 2; g.beginPath(); const y = i * h / n + R() * h / n; g.moveTo(0, y); g.bezierCurveTo(w * 0.3, y + R() * 6 - 3, w * 0.6, y + R() * 6 - 3, w, y + R() * 4 - 2); g.stroke(); }
+    g.fillStyle = 'rgba(30,15,5,0.6)'; g.fillRect(0, i * h / n, w, 3);
+    const off = R() * w; g.fillRect(off, i * h / n, 3, h / n);
+  }
+}, [3, 2]);
+const wallTex = ctex(512, 512, (g, w, h) => {
+  g.fillStyle = '#9fc2b4'; g.fillRect(0, 0, w, h);
+  for (let x = 0; x < w; x += 64) { g.fillStyle = 'rgba(255,255,255,0.10)'; g.fillRect(x, 0, 32, h); }
+  g.fillStyle = 'rgba(255,255,255,0.18)';
+  for (let y = 32; y < h; y += 64) for (let x = 16; x < w; x += 64) { g.beginPath(); g.arc(x + 16, y, 5, 0, 7); g.fill(); }
+}, [5, 2]);
+const deskWall = ctex(512, 512, (g, w, h) => {
+  g.fillStyle = '#1a1a26'; g.fillRect(0, 0, w, h);
+  g.strokeStyle = 'rgba(255,255,255,0.05)'; g.lineWidth = 2;
+  for (let i = 0; i <= 8; i++) { g.beginPath(); g.moveTo(i * 64, 0); g.lineTo(i * 64, h); g.stroke(); g.beginPath(); g.moveTo(0, i * 64); g.lineTo(w, i * 64); g.stroke(); }
+}, [4, 2]);
+const carpet = ctex(256, 256, (g, w, h) => {
+  g.fillStyle = '#242333'; g.fillRect(0, 0, w, h); const R = rng(9);
+  for (let i = 0; i < 4000; i++) { g.fillStyle = `rgba(${60 + R() * 40 | 0},${58 + R() * 40 | 0},${80 + R() * 40 | 0},0.25)`; g.fillRect(R() * w, R() * h, 2, 2); }
+}, [10, 10]);
+
+// ---------- kitchen ----------
+const K = new THREE.Group(); scene.add(K);
+{
+  const floor = mesh(new THREE.PlaneGeometry(10, 8), std(0xffffff, 0.45, 0, {map: woodTex}), 0, 0, 0.5, false); floor.rotation.x = -Math.PI / 2; K.add(floor);
+  const wall = mesh(new THREE.PlaneGeometry(10, 3.4), std(0xffffff, 0.9, 0, {map: wallTex}), 0, 1.7, -1.9, false); K.add(wall);
+  const wain = box(10, 0.95, 0.06, std(0xefe6d6, 0.7), 0, 0.475, -1.87, false); K.add(wain);
+  K.add(box(10, 0.07, 0.1, std(0xf7f1e6, 0.5), 0, 0.97, -1.85, false));
+  K.add(box(10, 0.12, 0.08, std(0xf7f1e6, 0.5), 0, 0.04, -1.86, false));
+  // window
+  const win = mesh(new THREE.PlaneGeometry(1.5, 1.35), new THREE.MeshBasicMaterial({color: 0xe8f4ff}), -1.45, 1.75, -1.86, false, false); K.add(win);
+  const fr = std(0xf5efe3, 0.5);
+  K.add(box(1.7, 0.08, 0.1, fr, -1.45, 2.45, -1.85), box(1.7, 0.08, 0.1, fr, -1.45, 1.05, -1.85), box(0.08, 1.48, 0.1, fr, -2.25, 1.75, -1.85), box(0.08, 1.48, 0.1, fr, -0.65, 1.75, -1.85), box(0.05, 1.4, 0.08, fr, -1.45, 1.75, -1.84), box(1.6, 0.05, 0.08, fr, -1.45, 1.75, -1.84));
+  // curtains
+  const cur = std(0xd9855b, 0.95);
+  K.add(box(0.28, 1.6, 0.1, cur, -2.45, 1.75, -1.78), box(0.28, 1.6, 0.1, cur, -0.45, 1.75, -1.78), cyl(0.02, 0.02, 2.3, std(0x333333, 0.4, 0.8), -1.45, 2.58, -1.78));
+  K.children[K.children.length - 1].rotation.z = Math.PI / 2;
+  // cabinets + counter
+  const cab = std(0x35566b, 0.5);
+  for (let i = 0; i < 3; i++) { K.add(box(0.7, 0.88, 0.62, cab, 1.15 + i * 0.72, 0.44, -1.55)); K.add(box(0.5, 0.5, 0.02, std(0x3f6781, 0.45), 1.15 + i * 0.72, 0.5, -1.23, false)); K.add(cyl(0.012, 0.012, 0.14, std(0xcdd2d6, 0.2, 1), 1.15 + i * 0.72, 0.78, -1.21)); }
+  K.add(box(2.2, 0.05, 0.68, std(0xe9e4da, 0.35), 1.6, 0.9, -1.53));
+  for (let i = 0; i < 3; i++) K.add(box(0.7, 0.6, 0.34, cab, 1.15 + i * 0.72, 2.0, -1.72));
+  // fridge
+  K.add(box(0.8, 1.9, 0.7, std(0xd8dde0, 0.28, 0.5), 3.4, 0.95, -1.5), box(0.02, 0.5, 0.04, std(0x999, 0.2, 1), 3.08, 1.3, -1.12));
+  // plant on counter + shelf plant
+  const pot = std(0xc8704a, 0.8), leaf = std(0x4c8f4a, 0.7);
+  K.add(cyl(0.11, 0.08, 0.16, pot, 0.95, 1.0, -1.5));
+  for (let i = 0; i < 7; i++) { const l = sph(0.06, leaf, 0.95 + Math.cos(i * 1.1) * 0.08, 1.2 + (i % 3) * 0.06, -1.5 + Math.sin(i * 1.1) * 0.08, 0.5, 1.6, 0.4); l.rotation.z = Math.cos(i) * 0.5; K.add(l); }
+  // picture frame (chart painting)
+  const pic = ctex(256, 200, (g, w, h) => {
+    g.fillStyle = '#f2ead7'; g.fillRect(0, 0, w, h); g.strokeStyle = '#2a7d5a'; g.lineWidth = 6; g.beginPath(); g.moveTo(10, 150); g.lineTo(60, 120); g.lineTo(100, 140); g.lineTo(160, 70); g.lineTo(200, 90); g.lineTo(245, 25); g.stroke();
+  });
+  K.add(box(0.74, 0.58, 0.04, std(0x3a2a1c, 0.5), 0.2, 1.95, -1.84), mesh(new THREE.PlaneGeometry(0.62, 0.46), std(0xffffff, 0.8, 0, {map: pic}), 0.2, 1.95, -1.81, false));
+  // table
+  const tw = std(0x8b5a34, 0.4);
+  K.add(cyl(0.52, 0.52, 0.045, tw, 0, 0.74, 0.0, 40), cyl(0.05, 0.07, 0.7, std(0x2a2a2a, 0.4, 0.6), 0, 0.37, 0), cyl(0.27, 0.3, 0.035, std(0x2a2a2a, 0.4, 0.6), 0, 0.02, 0));
+  // mugs
+  const mugM = (c) => std(c, 0.3);
+  function mug(c, x, z) { const g = new THREE.Group(); g.add(cyl(0.045, 0.04, 0.09, mugM(c), 0, 0.045, 0), mesh(new THREE.TorusGeometry(0.03, 0.009, 8, 16), mugM(c), 0.05, 0.047, 0)); g.add(cyl(0.038, 0.038, 0.004, std(0x3a1d10, 0.2), 0, 0.087, 0)); g.position.set(x, 0.765, z); K.add(g); return g; }
+  mug(0xf2f2ee, -0.2, 0.08); mug(0xd94f4f, 0.2, 0.1);
+  K.add(box(0.2, 0.012, 0.28, std(0xe8e0cf, 0.8), 0.02, 0.768, -0.12), box(0.3, 0.012, 0.2, std(0x1e1e24, 0.3, 0.6), 0.02, 0.771, -0.12));
+  // pendant lamp
+  K.add(cyl(0.004, 0.004, 1.1, std(0x111, 0.5), 0, 2.65, 0.0), mesh(new THREE.ConeGeometry(0.28, 0.2, 32, 1, true), std(0xe0a24a, 0.4, 0.3, {side: THREE.DoubleSide}), 0, 2.02, 0), sph(0.06, new THREE.MeshBasicMaterial({color: 0xfff0c8}), 0, 1.98, 0));
+  // sun
+  const sun = new THREE.SpotLight(0xffddb0, 260, 14, 0.62, 0.9, 2); sun.position.set(-2.6, 3.1, -1.3); sun.target.position.set(0, 0.8, 0.2); sun.castShadow = true;
+  sun.shadow.mapSize.set(1536, 1536); sun.shadow.bias = -0.0004; sun.shadow.radius = 5; K.add(sun, sun.target);
+  const pend = new THREE.PointLight(0xffc27a, 22, 6, 2); pend.position.set(0, 1.9, 0.15); K.add(pend);
+  const fill = new THREE.PointLight(0xa8c8ff, 14, 9, 2); fill.position.set(1.6, 1.9, 3.6); K.add(fill);
+  const fill2 = new THREE.PointLight(0xffe8d0, 10, 9, 2); fill2.position.set(-1.6, 1.6, 3.2); K.add(fill2);
+}
+
+// ---------- desk room ----------
+const DX = 20;
+const D = new THREE.Group(); scene.add(D);
+const screens = {};
+function makeScreen(w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return {c, g: c.getContext('2d'), t};
+}
+let rgbLight, glowLight, keyLight, rimLight;
+{
+  const floor = mesh(new THREE.PlaneGeometry(9, 9), std(0xffffff, 0.95, 0, {map: carpet}), DX + 1, 0, 0, false); floor.rotation.x = -Math.PI / 2; D.add(floor);
+  const wall = mesh(new THREE.PlaneGeometry(9, 3.4), std(0xffffff, 0.8, 0, {map: deskWall}), DX - 0.9, 1.7, 0, false); wall.rotation.y = Math.PI / 2; D.add(wall);
+  const wall2 = mesh(new THREE.PlaneGeometry(9, 3.4), std(0xffffff, 0.8, 0, {map: deskWall}), DX + 1, 1.7, -2.2, false); D.add(wall2);
+  // desk
+  const dm = std(0x2b2b33, 0.35, 0.1);
+  D.add(box(0.8, 0.045, 2.2, dm, DX - 0.5, 0.74, 0), box(0.06, 0.72, 0.7, dm, DX - 0.15, 0.37, -0.85), box(0.06, 0.72, 0.7, dm, DX - 0.15, 0.37, 0.85));
+  // monitors
+  for (const [z, key] of [[-0.42, 'A'], [0.5, 'B']]) {
+    const mon = new THREE.Group(); mon.position.set(DX - 0.62, 0.77, z); mon.rotation.y = Math.PI / 2 - 0.38; D.add(mon);
+    const bz = std(0x0c0c10, 0.3, 0.6);
+    mon.add(box(0.7, 0.42, 0.04, bz, 0, 0.35, 0), cyl(0.03, 0.03, 0.14, bz, 0, 0.07, -0.02), box(0.26, 0.015, 0.16, bz, 0, 0.005, -0.02));
+    const sc = makeScreen(768, 432); screens[key] = sc;
+    const sp = mesh(new THREE.PlaneGeometry(0.66, 0.372), new THREE.MeshBasicMaterial({map: sc.t, toneMapped: false}), 0, 0.35, 0.023, false, false); mon.add(sp);
+  }
+  // keyboard, mouse
+  D.add(box(0.15, 0.015, 0.44, std(0x15151a, 0.4), DX - 0.28, 0.77, 0.06), box(0.07, 0.025, 0.11, std(0x15151a, 0.3), DX - 0.28, 0.78, 0.5));
+  // RGB strip
+  const strip = box(0.02, 0.03, 2.0, new THREE.MeshBasicMaterial({color: 0xff2bd6}), DX - 0.88, 0.88, 0, false); D.add(strip);
+  const strip2 = box(0.02, 0.03, 2.0, new THREE.MeshBasicMaterial({color: 0x2bd9ff}), DX - 0.88, 1.9, 0, false); D.add(strip2);
+  // neon sign
+  const neon = ctex(512, 160, (g, w, h) => { g.clearRect(0, 0, w, h); g.font = '900 96px Orbitron, Impact, sans-serif'; g.textAlign = 'center'; g.fillStyle = '#04252b'; g.fillRect(0, 0, w, h); g.shadowColor = '#00f0ff'; g.shadowBlur = 24; g.fillStyle = '#9ff8ff'; g.fillText('TRADER', w / 2, 110); g.fillText('TRADER', w / 2, 110); });
+  const nm = mesh(new THREE.PlaneGeometry(0.8, 0.25), new THREE.MeshBasicMaterial({map: neon, toneMapped: false}), DX - 0.88, 1.65, 0.0, false, false); nm.rotation.y = Math.PI / 2; D.add(nm);
+  // shelf with figures
+  D.add(box(0.2, 0.025, 0.9, dm, DX - 0.8, 1.35, -1.3));
+  D.add(cyl(0.05, 0.05, 0.12, std(0xf5c542, 0.3, 0.8), DX - 0.8, 1.42, -1.1), sph(0.06, std(0xe0504a, 0.4), DX - 0.8, 1.45, -1.4), box(0.08, 0.14, 0.06, std(0x4aa0e0, 0.5), DX - 0.8, 1.45, -1.25));
+  // chair
+  const cm = std(0x1a1a20, 0.6);
+  const chair = new THREE.Group(); chair.position.set(DX + 0.35, 0, 0.05); chair.rotation.y = -1.1; D.add(chair);
+  chair.add(box(0.5, 0.08, 0.5, cm, 0, 0.46, -0.05), box(0.5, 0.65, 0.08, cm, 0, 0.82, -0.3), cyl(0.03, 0.03, 0.3, std(0x777, 0.3, 0.9), 0, 0.26, -0.05));
+  for (let i = 0; i < 5; i++) { const s = box(0.3, 0.025, 0.04, std(0x777, 0.3, 0.9), 0, 0.1, -0.05); s.position.x = Math.cos(i * 1.2566) * 0.15; s.position.z = -0.05 + Math.sin(i * 1.2566) * 0.15; s.rotation.y = -i * 1.2566; chair.add(s); }
+  keyLight = new THREE.SpotLight(0xbcd2ff, 70, 9, 0.9, 0.9, 2); keyLight.position.set(DX + 1.6, 2.9, 2.2); keyLight.target.position.set(DX + 0.2, 1.2, 0); keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(1536, 1536); keyLight.shadow.bias = -0.0004; keyLight.shadow.radius = 5; D.add(keyLight, keyLight.target);
+  glowLight = new THREE.PointLight(0x4aa8ff, 9, 4, 2); glowLight.position.set(DX - 0.25, 1.25, 0.3); D.add(glowLight);
+  rgbLight = new THREE.PointLight(0xff2bd6, 7, 4, 2); rgbLight.position.set(DX - 0.6, 0.95, -0.9); D.add(rgbLight);
+  rimLight = new THREE.PointLight(0x35c8ff, 9, 5, 2); rimLight.position.set(DX + 1.4, 1.7, -1.2); D.add(rimLight);
+  const warm = new THREE.PointLight(0xffb070, 6, 5, 2); warm.position.set(DX + 1.2, 1.8, 1.6); D.add(warm);
+}
+
+// ---------- falling money ----------
+const billTex = ctex(256, 128, (g, w, h) => { g.fillStyle = '#5fae6e'; g.fillRect(0, 0, w, h); g.strokeStyle = '#2f6b3d'; g.lineWidth = 8; g.strokeRect(6, 6, w - 12, h - 12); g.fillStyle = '#2f6b3d'; g.font = '900 78px Impact, sans-serif'; g.textAlign = 'center'; g.fillText('$', w / 2, 92); });
+const bills = new THREE.Group(); D.add(bills);
+const billData = [];
+{
+  const R = rng(21);
+  for (let i = 0; i < 36; i++) {
+    const m = mesh(new THREE.PlaneGeometry(0.18, 0.09), std(0xffffff, 0.6, 0, {map: billTex, side: THREE.DoubleSide}), 0, 0, 0, false, false);
+    bills.add(m); billData.push({m, x: DX - 0.2 + R() * 1.9, z: -0.7 + R() * 2.6, ph: R(), sp: 0.18 + R() * 0.2, rx: R() * 6, rz: R() * 6, wx: 0.8 + R() * 1.5});
+  }
+}
+
+// ---------- characters ----------
+function makeChar(o) {
+  const g = new THREE.Group();
+  const skin = std(o.skin, 0.55), cloth = std(o.shirt, 0.85), pants = std(o.pants, 0.85), shoe = std(0xeeeeee, 0.5);
+  const fem = !!o.female, ts = fem ? 0.9 : 1;
+  const pelvis = new THREE.Group(); pelvis.position.y = 0.52; g.add(pelvis);
+  pelvis.add(sph(0.2, pants, 0, 0, 0, 1.15 * ts, 0.7, 0.95));
+  for (const s of [-1, 1]) {
+    const th = cap(0.088, 0.3, pants, s * 0.1, 0, 0.22); th.rotation.x = Math.PI / 2; pelvis.add(th);
+    pelvis.add(cap(0.072, 0.3, pants, s * 0.1, -0.24, 0.43));
+    pelvis.add(sph(0.085, shoe, s * 0.1, -0.46, 0.5, 1, 0.6, 1.5));
+  }
+  const torso = new THREE.Group(); pelvis.add(torso);
+  const body = cap(0.185, 0.3, cloth, 0, 0.3, 0); body.scale.set(ts * 1.08, 1, 0.82); torso.add(body);
+  if (o.hood) { torso.add(sph(0.2, cloth, 0, 0.62, -0.12, 1.15, 0.8, 0.8)); }
+  torso.add(sph(0.055, skin, 0, 0.7, 0.0, 1, 1.15, 1));
+  const head = new THREE.Group(); head.position.set(0, 0.9, 0.0); torso.add(head);
+  const skull = sph(0.19, skin, 0, 0, 0, 0.95, 1.08, 1.0); head.add(skull);
+  for (const s of [-1, 1]) head.add(sph(0.04, skin, s * 0.18, -0.01, -0.01, 0.5, 1.0, 0.8));
+  head.add(sph(0.026, std(o.skin, 0.55), 0, -0.012, 0.185, 1, 1.1, 1));
+  // eyes
+  const eyes = [];
+  for (const s of [-1, 1]) {
+    const eg = new THREE.Group(); eg.position.set(s * 0.07, 0.035, 0.158); head.add(eg);
+    const sc = sph(0.04, std(0xffffff, 0.2), 0, 0, 0, 1, 1.05, 0.9); eg.add(sc);
+    const pg = new THREE.Group(); pg.position.z = 0.03; eg.add(pg);
+    pg.add(sph(0.021, std(o.iris, 0.3), 0, 0, 0.0, 1, 1, 0.5), sph(0.011, std(0x050505, 0.2), 0, 0, 0.008, 1, 1, 0.5), sph(0.005, new THREE.MeshBasicMaterial({color: 0xffffff}), 0.007, 0.008, 0.016));
+    const lid = sph(0.0425, skin, 0, 0, 0.001, 1, 1.07, 0.93); lid.scale.y = 0.01; lid.position.y = 0.04; eg.add(lid);
+    eyes.push({eg, pg, lid});
+  }
+  // brows
+  const browM = std(o.hair, 0.7); const brows = [];
+  for (const s of [-1, 1]) { const b = box(0.07, 0.014, 0.014, browM, s * 0.07, 0.095, 0.172, false); head.add(b); brows.push(b); }
+  // mouth
+  const lipM = std(o.lip, 0.4);
+  const mouth = new THREE.Group(); mouth.position.set(0, -0.085, 0.165); head.add(mouth);
+  const cav = sph(1, std(0x3a0c10, 0.5), 0, 0, 0, 0.03, 0.004, 0.01); mouth.add(cav);
+  const teeth = sph(1, std(0xf5f5f0, 0.3), 0, 0, 0.002, 0.026, 0.004, 0.008); mouth.add(teeth);
+  const upper = sph(1, lipM, 0, 0.004, 0.003, 0.034, 0.0075, 0.011); mouth.add(upper);
+  const lower = sph(1, lipM, 0, -0.004, 0.004, 0.031, 0.0095, 0.012); mouth.add(lower);
+  const cL = sph(0.0065, lipM, 0.034, 0, 0.002), cR = sph(0.0065, lipM, -0.034, 0, 0.002); mouth.add(cL, cR);
+  // hair
+  const hairM = std(o.hair, 0.55);
+  if (!fem) {
+    const cp = mesh(new THREE.SphereGeometry(0.205, DET.hw, DET.hh, 0, Math.PI * 2, 0, Math.PI * 0.46), hairM, 0, 0.02, -0.012, true, false); cp.scale.set(0.99, 1.09, 1.03); cp.rotation.x = -0.32; head.add(cp);
+    for (const s of [-1, 1]) head.add(box(0.03, 0.09, 0.07, hairM, s * 0.18, 0.05, 0.0, false));
+  } else {
+    const cp = mesh(new THREE.SphereGeometry(0.205, DET.hw, DET.hh, 0, Math.PI * 2, 0, Math.PI * 0.45), hairM, 0, 0.02, -0.01, true, false); cp.scale.set(1.0, 1.1, 1.04); cp.rotation.x = -0.35; head.add(cp);
+    head.add(sph(0.2, hairM, 0, -0.03, -0.08, 1.0, 1.1, 0.92));
+    const pt = cap(0.055, 0.28, hairM, 0, -0.16, -0.25); pt.rotation.x = 0.5; head.add(pt);
+    for (const s of [-1, 1]) head.add(sph(0.05, hairM, s * 0.17, 0.0, 0.04, 0.7, 1.9, 0.9));
+  }
+  if (o.headphones) {
+    const hm = std(0x1d1d22, 0.35, 0.4);
+    const arc = mesh(new THREE.TorusGeometry(0.215, 0.014, 10, 32, Math.PI), hm, 0, 0.0, 0.0); arc.rotation.z = 0; head.add(arc);
+    for (const s of [-1, 1]) { const cc = cyl(0.05, 0.05, 0.05, hm, s * 0.215, -0.01, 0.0); cc.rotation.z = Math.PI / 2; head.add(cc); head.add(cyl(0.028, 0.028, 0.01, new THREE.MeshStandardMaterial({color: 0x003a55, emissive: 0x0070c0, emissiveIntensity: 0.8}), s * 0.242, -0.01, 0)); head.children[head.children.length - 1].rotation.z = Math.PI / 2; }
+  }
+  // sweat
+  const sweat = sph(0.016, std(0x7ec8ff, 0.1, 0, {transparent: true, opacity: 0.85}), 0.15, 0.1, 0.1, 0.8, 1.5, 0.8); sweat.visible = false; head.add(sweat);
+  // arms
+  const arms = [];
+  for (const s of [1, -1]) {
+    const sh = new THREE.Group(); sh.position.set(s * (fem ? 0.22 : 0.255), 0.54, 0); torso.add(sh);
+    sh.add(sph(0.068, cloth, 0, 0, 0));
+    sh.add(cap(0.06, 0.18, cloth, 0, -0.16, 0));
+    const el = new THREE.Group(); el.position.y = -0.3; sh.add(el);
+    el.add(sph(0.055, cloth, 0, 0, 0));
+    el.add(cap(0.052, 0.18, o.sleeves ? cloth : skin, 0, -0.15, 0));
+    const hand = sph(0.058, skin, 0, -0.32, 0.0, 1, 1.15, 0.8); el.add(hand);
+    arms.push({sh, el, hand, s});
+  }
+  return {g, pelvis, torso, head, eyes, brows, mouth, parts: {cav, teeth, upper, lower, cL, cR}, arms, sweat};
+}
+const trader = {skin: 0xd8a070, shirt: 0x26324f, pants: 0x2e2e38, hair: 0x2a1a10, iris: 0x4a2f1a, lip: 0xb86a5a, hood: true, sleeves: true};
+const friendO = {skin: 0xf0c4a0, shirt: 0x2fa090, pants: 0x3a4a6b, hair: 0x6a2e1c, iris: 0x2f6f55, lip: 0xd66b72, female: true, sleeves: true};
+const KT = makeChar(trader), KF = makeChar(friendO), DT = makeChar({...trader, headphones: true});
+KT.g.position.set(0.65, 0, 0.35); KT.g.rotation.y = -0.87; K.add(KT.g);
+KF.g.position.set(-0.65, 0, 0.35); KF.g.rotation.y = 0.87; K.add(KF.g);
+DT.g.position.set(DX + 0.35, 0.0, 0.05); DT.g.rotation.y = -1.1; D.add(DT.g);
+// kitchen chairs
+function kchair(x, ry) {
+  const g = new THREE.Group(); g.position.set(x, 0, 0.35); g.rotation.y = ry; const wm = std(0x5b3a22, 0.5);
+  g.add(box(0.46, 0.05, 0.46, wm, 0, 0.455, -0.02), box(0.46, 0.5, 0.05, wm, 0, 0.72, -0.26));
+  for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) g.add(cyl(0.025, 0.02, 0.45, wm, a * 0.2, 0.22, b * 0.2 - 0.02));
+  K.add(g);
+}
+kchair(0.65 + 0.0, -0.87); kchair(-0.65, 0.87);
+// mug in trader's hand
+const handMug = new THREE.Group();
+{ const mm = std(0xd94f4f, 0.3); handMug.add(cyl(0.045, 0.04, 0.09, mm, 0, 0, 0), mesh(new THREE.TorusGeometry(0.03, 0.009, 8, 16), mm, 0.05, 0, 0), cyl(0.038, 0.038, 0.004, std(0x3a1d10, 0.2), 0, 0.044, 0)); }
+KT.arms[1].el.add(handMug); handMug.position.set(0, -0.36, 0.05); handMug.visible = false;
+
+// ---------- pose / expression tracks ----------
+const POSE = {
+  rest:   {sx: -0.12, ex: -0.3, sz: 0.08},
+  table:  {sx: -0.75, ex: -0.8, sz: -0.12},
+  type:   {sx: -0.85, ex: -0.75, sz: -0.05},
+  talk:   {sx: -0.6, ex: -1.1, sz: 0.22},
+  mugup:  {sx: -0.9, ex: -1.7, sz: -0.05},
+  head:   {sx: -2.15, ex: -1.4, sz: 0.28},
+  slump:  {sx: 0.0, ex: -0.1, sz: 0.12}
+};
+// each key: t, poseL, poseR, expr {bl,br (brow raise), tilt, smile, sweat, gx, gy (gaze), yaw, pitch, lean}
+const P = (a, b) => ({L: POSE[a], R: POSE[b || a]});
+const TRACKS = {
+  KF: [
+    {t: 0, ...P('table'), e: {bl: 0.2, br: 0.2, tilt: 0, smile: 0.35, sweat: 0, gx: 0.6, gy: 0, yaw: 0.1, pitch: 0, lean: 0.03}},
+    {t: 3.8, ...P('table'), e: {bl: 0.3, br: 0.3, tilt: 0, smile: 0.3, sweat: 0, gx: 0.8, gy: 0, yaw: 0.05, pitch: 0, lean: 0.03}},
+    {t: 8.4, ...P('table'), e: {bl: 0.1, br: 0.1, tilt: 0, smile: 0.2, sweat: 0, gx: 0.8, gy: 0, yaw: 0.05, pitch: 0, lean: 0.0}},
+    {t: 21.6, ...P('table'), e: {bl: 0.2, br: 0.2, tilt: 0, smile: 0.1, sweat: 0, gx: 0.6, gy: 0, yaw: 0.0, pitch: 0, lean: 0.03}},
+    {t: 22.0, ...P('talk', 'table'), e: {bl: 0.9, br: 0.15, tilt: 0.0, smile: -0.1, sweat: 0, gx: 0.7, gy: 0.0, yaw: 0.0, pitch: -0.03, lean: 0.07}},
+    {t: 25.4, ...P('talk', 'table'), e: {bl: 0.9, br: 0.15, tilt: 0.0, smile: -0.1, sweat: 0, gx: 0.7, gy: 0.0, yaw: 0.0, pitch: -0.03, lean: 0.07}}
+  ],
+  KT: [
+    {t: 0, ...P('table'), e: {bl: 0.1, br: 0.1, tilt: 0, smile: 0.45, sweat: 0, gx: -0.6, gy: 0, yaw: 0.0, pitch: 0, lean: 0}},
+    {t: 3.8, ...P('talk', 'table'), e: {bl: 0.25, br: 0.25, tilt: -0.1, smile: 0.5, sweat: 0, gx: -0.2, gy: 0.05, yaw: -0.15, pitch: 0.0, lean: 0.03}},
+    {t: 8.4, ...P('talk', 'table'), e: {bl: 0.2, br: 0.2, tilt: 0, smile: 0.5, sweat: 0, gx: -0.2, gy: 0, yaw: -0.15, pitch: 0, lean: 0}},
+    {t: 21.6, ...P('mugup', 'table'), e: {bl: 0.2, br: 0.2, tilt: 0.45, smile: 0.2, sweat: 1, gx: -0.6, gy: 0, yaw: 0.1, pitch: 0, lean: 0}},
+    {t: 23.1, ...P('table', 'mugup'), e: {bl: 0.6, br: 0.6, tilt: 0.55, smile: 1.0, sweat: 1, gx: -0.2, gy: 0.0, yaw: -0.1, pitch: 0.0, lean: 0}},
+    {t: 25.4, ...P('table', 'mugup'), e: {bl: 0.6, br: 0.6, tilt: 0.55, smile: 1.0, sweat: 1, gx: -0.2, gy: 0.0, yaw: -0.1, pitch: 0.0, lean: 0}}
+  ],
+  DT: [
+    {t: 0, ...P('type'), e: {bl: 0, br: 0, tilt: -0.2, smile: 0.1, sweat: 0, gx: -0.9, gy: 0, yaw: 0.2, pitch: 0.05, lean: 0.05}},
+    {t: 8.4, ...P('type'), e: {bl: 0, br: 0, tilt: -0.2, smile: 0.2, sweat: 0, gx: -0.9, gy: 0, yaw: 0.35, pitch: 0.05, lean: 0.05}},
+    {t: 9.5, ...P('type'), e: {bl: 0.1, br: 0.1, tilt: 0.1, smile: 0.35, sweat: 0, gx: -0.3, gy: 0, yaw: 0.6, pitch: 0, lean: 0.03}},
+    {t: 11.7, ...P('type'), e: {bl: 0.2, br: 0.2, tilt: 0.25, smile: 0.4, sweat: 0.2, gx: -0.2, gy: 0, yaw: 0.65, pitch: 0, lean: 0.07}},
+    {t: 13.5, ...P('type'), e: {bl: 0.3, br: 0.3, tilt: 0.4, smile: 0.1, sweat: 0.7, gx: -0.8, gy: 0.0, yaw: 0.3, pitch: 0.05, lean: 0.12}},
+    {t: 15.3, ...P('type'), e: {bl: 0.5, br: 0.5, tilt: 0.55, smile: 0.0, sweat: 1, gx: -0.2, gy: 0, yaw: 0.6, pitch: 0.0, lean: 0.14}},
+    {t: 17.3, ...P('type'), e: {bl: 0.7, br: 0.7, tilt: 0.7, smile: -0.3, sweat: 1, gx: -0.7, gy: 0, yaw: 0.4, pitch: 0.05, lean: 0.18}},
+    {t: 18.2, ...P('head'), e: {bl: 1.0, br: 1.0, tilt: 0.8, smile: -0.6, sweat: 1, gx: -0.8, gy: 0.0, yaw: 0.35, pitch: 0.1, lean: 0.12}},
+    {t: 19.0, ...P('slump'), e: {bl: 0.9, br: 0.9, tilt: 0.8, smile: -0.5, sweat: 1, gx: -0.5, gy: -0.3, yaw: 0.5, pitch: 0.18, lean: -0.1}},
+    {t: 22, ...P('slump'), e: {bl: 0.3, br: 0.3, tilt: 0.5, smile: -0.2, sweat: 1, gx: 0, gy: -0.4, yaw: 0.7, pitch: 0.2, lean: -0.12}},
+    {t: 33, ...P('slump'), e: {bl: 0.3, br: 0.3, tilt: 0.6, smile: -0.2, sweat: 1, gx: 0.2, gy: -0.5, yaw: 0.75, pitch: 0.25, lean: -0.14}}
+  ]
+};
+function sample(track, t) {
+  let a = track[0], b = track[track.length - 1];
+  for (let i = 0; i < track.length - 1; i++) if (t >= track[i].t && t <= track[i + 1].t) { a = track[i]; b = track[i + 1]; break; }
+  if (t <= track[0].t) b = a; if (t >= track[track.length - 1].t) a = b;
+  const k = a === b ? 0 : sm((t - a.t) / (b.t - a.t));
+  const pose = s => { const o = {}; for (const key of ['sx', 'ex', 'sz']) o[key] = lerp(a[s][key], b[s][key], k); return o; };
+  const e = {}; for (const key in a.e) e[key] = lerp(a.e[key], b.e[key], k);
+  return {L: pose('L'), R: pose('R'), e};
+}
+
+// ---------- audio / lipsync ----------
+let LINES = {}, TL = null;
+function speaker(t) {
+  for (const l of TL.lines) { const d = LINES[l.id].dur; if (t >= l.t && t <= l.t + d) { const env = LINES[l.id].env30; const f = (t - l.t) * 30; const i = Math.floor(f), k = f - i; const v = lerp(env[i] ?? 0, env[i + 1] ?? 0, k); return {who: l.who, o: v}; } }
+  return null;
+}
+
+function animChar(C, key, t, talk, hold) {
+  const s = sample(TRACKS[key], t), e = s.e;
+  const talkO = talk ? clamp(Math.pow(talk, 0.8) * 1.5) : 0;
+  const wob = Math.sin(t * 41) * 0.5 + 0.5;
+  const w = 1 + 0.18 * Math.sin(t * 29) - 0.25 * talkO * wob + e.smile * 0.35;
+  const openH = talkO * (0.8 + 0.35 * wob);
+  const P_ = C.parts, base = 0.0035;
+  const gap = base + 0.021 * openH;
+  P_.cav.scale.set(0.028 * Math.max(0.6, w), gap, 0.01);
+  P_.teeth.scale.set(0.024 * Math.max(0.6, w), clamp(gap * 0.8, 0.002, 0.009), 0.008); P_.teeth.position.y = gap * 0.35;
+  P_.upper.scale.set(0.034 * Math.max(0.65, w), 0.0075, 0.011); P_.upper.position.y = gap * 0.9;
+  P_.lower.scale.set(0.031 * Math.max(0.65, w), 0.0095 + 0.003 * openH, 0.012); P_.lower.position.y = -gap * 0.95 - 0.003;
+  const cw = 0.034 * Math.max(0.65, w);
+  P_.cL.position.set(cw, e.smile * 0.012 - gap * 0.1, 0.0); P_.cR.position.set(-cw, e.smile * 0.012 - gap * 0.1, 0.0);
+  // brows
+  C.brows[1].position.y = 0.095 + e.bl * 0.02; C.brows[0].position.y = 0.095 + e.br * 0.02;
+  C.brows[1].rotation.z = -e.tilt * 0.45 + e.smile * 0.02; C.brows[0].rotation.z = e.tilt * 0.45 - e.smile * 0.02;
+  // blink
+  const bp = (t * 0.33 + (key === 'KF' ? 0.4 : key === 'KT' ? 0.1 : 0.7)) % 1; const blink = bp > 0.965 ? Math.sin((bp - 0.965) / 0.035 * Math.PI) : 0;
+  const squint = e.smile > 0.8 ? 0.25 : 0;
+  for (const E of C.eyes) { E.lid.scale.y = lerp(0.01, 1, clamp(blink + squint + (e.sweat > 0.9 && e.tilt > 0.7 ? 0.1 : 0))) ; E.lid.position.y = lerp(0.04, 0, clamp(blink + squint)); E.pg.position.x = e.gx * 0.016; E.pg.position.y = e.gy * 0.014; }
+  // head
+  const nod = talkO * 0.06 * Math.sin(t * 9), sway = Math.sin(t * 0.8 + (key === 'KF' ? 1 : 0)) * 0.025;
+  C.head.rotation.y = e.yaw + sway + (talk ? Math.sin(t * 5) * 0.03 * talkO : 0);
+  C.head.rotation.x = e.pitch + nod;
+  C.head.rotation.z = Math.sin(t * 0.6 + 2) * 0.02;
+  C.torso.rotation.x = e.lean + Math.sin(t * 1.7) * 0.008;
+  C.torso.scale.set(1, 1 + Math.sin(t * 1.7) * 0.008, 1);
+  // arms
+  const type = key === 'DT' && (s.L === s.L) && t < 19.0 ? 1 : 0;
+  for (const A of C.arms) {
+    const ps = A.s > 0 ? s.L : s.R; let sx = ps.sx, ex = ps.ex, sz = ps.sz;
+    if (key === 'DT' && t < 18.0 && ps.sx < -0.8) { const ph = A.s > 0 ? 0 : 1.7; sx += Math.sin(t * 22 + ph) * 0.03; ex += Math.sin(t * 19 + ph) * 0.06; }
+    if (talk && ps === (A.s > 0 ? s.L : s.R) && ps.sz > 0.15) { sx += Math.sin(t * 6) * 0.1 * talkO; ex += Math.sin(t * 5.1) * 0.12 * talkO; }
+    if (key === 'KT' && ps.ex < -1.5) { ex += Math.sin(t * 40) * 0.01; }
+    A.sh.rotation.x = sx; A.sh.rotation.z = A.s * sz; A.el.rotation.x = ex;
+  }
+  // sweat
+  C.sweat.visible = e.sweat > 0.15; C.sweat.position.set(0.15, 0.12 - ((t * 0.6) % 1) * 0.18, 0.09); C.sweat.scale.setScalar(Math.min(1, e.sweat * 1.4));
+  return s;
+}
+
+// ---------- screens ----------
+function priceAt(t) {
+  const n = (x, a) => Math.sin(x * a) * 0.5 + Math.sin(x * a * 2.3 + 1.3) * 0.28;
+  let p = 100 + n(t, 1.1) * 0.3;
+  const seg = (a, b, from, to) => from + (to - from) * sm((t - a) / (b - a));
+  if (t < 8.4) return p;
+  if (t < 10.7) return seg(8.4, 10.7, 100, 98.85) + n(t, 2.1) * 0.12;
+  if (t < 11.9) return seg(10.7, 11.9, 98.85, 99.6) + n(t, 2.1) * 0.1;
+  if (t < 13.6) return seg(11.9, 13.6, 99.6, 98.7) + n(t, 2.3) * 0.12;
+  if (t < 15.6) return seg(13.6, 15.6, 98.7, 97.6) + n(t, 2.3) * 0.12;
+  if (t < 19.0) return seg(15.6, 19.0, 97.6, 94.0) + n(t, 2.6) * 0.15;
+  return 94.0 + n(t, 2.6) * 0.1 - sm((t - 19) / 3) * 0.6;
+}
+function equityAt(t) {
+  if (t < 10.7) return 10000;
+  if (t < 11.9) return 9900;
+  const P_ = priceAt(t);
+  if (t < 15.6) return 9900 + 500 * (P_ - 99.6);
+  const e = 8900 + 2500 * (P_ - 97.6);
+  return Math.max(0, e);
+}
+const failed = t => equityAt(t) <= 1 && t > 18;
+function drawChart(sc, t) {
+  const g = sc.g, w = sc.c.width, h = sc.c.height;
+  const f = failed(t);
+  g.fillStyle = '#0a0e16'; g.fillRect(0, 0, w, h);
+  g.strokeStyle = '#18202e'; g.lineWidth = 1;
+  for (let i = 1; i < 8; i++) { g.beginPath(); g.moveTo(0, i * h / 8); g.lineTo(w, i * h / 8); g.stroke(); }
+  for (let i = 1; i < 12; i++) { g.beginPath(); g.moveTo(i * w / 12, 0); g.lineTo(i * w / 12, h); g.stroke(); }
+  g.fillStyle = '#6f8aa8'; g.font = 'bold 22px monospace'; g.fillText('XAUUSD  M5', 14, 28);
+  const lo = 93, hi = 101.4, Y = p => 50 + (hi - p) / (hi - lo) * (h - 80);
+  const step = 0.2, N = 46, k1 = Math.floor(t / step), cw = (w - 120) / N;
+  for (let i = 0; i < N; i++) {
+    const k = k1 - (N - 1) + i; const o = priceAt(k * step), c = priceAt(Math.min(t, (k + 1) * step));
+    const R = rng(k + 1000), up = c >= o; const wk = 0.09 + R() * 0.15;
+    const hiP = Math.max(o, c) + wk * R(), loP = Math.min(o, c) - wk * R();
+    g.strokeStyle = g.fillStyle = up ? '#21c17a' : '#ef4b57';
+    const x = 10 + i * cw + cw / 2; g.lineWidth = 2; g.beginPath(); g.moveTo(x, Y(hiP)); g.lineTo(x, Y(loP)); g.stroke();
+    g.fillRect(x - cw * 0.32, Math.min(Y(o), Y(c)), cw * 0.64, Math.max(3, Math.abs(Y(o) - Y(c))));
+  }
+  const line = (p, col, label) => { g.setLineDash([10, 6]); g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.moveTo(0, Y(p)); g.lineTo(w - 100, Y(p)); g.stroke(); g.setLineDash([]); g.fillStyle = col; g.fillRect(w - 100, Y(p) - 13, 100, 26); g.fillStyle = '#fff'; g.font = 'bold 18px monospace'; g.fillText(label, w - 94, Y(p) + 6); };
+  if (t >= 8.4 && t < 10.7) { line(100, '#4aa8ff', 'BUY 100.0'); line(99.0, '#ef4b57', 'SL 99.0'); }
+  if (t >= 10.7 && t < 11.9) { g.fillStyle = '#ef4b57'; g.font = 'bold 30px monospace'; g.fillText('STOPPED OUT  -1%', 24, h - 24); }
+  if (t >= 11.9 && t < 15.6) { line(99.6, '#4aa8ff', 'BUY 99.6'); line(t < 13.5 ? 98.6 : (t < 14.1 ? lerp(98.6, 95.2, sm((t - 13.5) / 0.6)) : 95.2), '#ef4b57', t < 13.5 ? 'SL 98.6' : 'SL 95.2'); }
+  if (t >= 15.6 && !f) { line(97.6, '#4aa8ff', 'BUY 97.6 x5'); g.fillStyle = '#ef4b57'; g.font = 'bold 28px monospace'; g.fillText('NO STOP LOSS', 24, h - 24); }
+  if (f) { g.fillStyle = (Math.floor(t * 6) % 2) ? 'rgba(239,75,87,0.55)' : 'rgba(120,10,20,0.6)'; g.fillRect(0, 0, w, h); g.fillStyle = '#fff'; g.font = '900 64px sans-serif'; g.textAlign = 'center'; g.fillText('STOP OUT', w / 2, h / 2 + 20); g.textAlign = 'left'; }
+  sc.t.needsUpdate = true;
+}
+function drawAccount(sc, t) {
+  const g = sc.g, w = sc.c.width, h = sc.c.height, f = failed(t), eq = equityAt(t);
+  g.fillStyle = f ? ((Math.floor(t * 5) % 2) ? '#5a0a14' : '#2a0508') : '#0d1320'; g.fillRect(0, 0, w, h);
+  g.textAlign = 'left';
+  if (f) {
+    g.fillStyle = '#ff3b4a'; g.font = '900 78px sans-serif'; g.textAlign = 'center';
+    g.fillText('ACCOUNT', w / 2, 140); g.fillText('FAILED', w / 2, 225);
+    g.fillStyle = '#fff'; g.font = 'bold 34px monospace'; g.fillText('BALANCE: $0.00', w / 2, 300); g.fillStyle = '#ffb3b8'; g.font = 'bold 26px monospace'; g.fillText('MARGIN LEVEL 0%  -  DAILY DD BREACHED', w / 2, 350);
+    g.fillStyle = (Math.floor(t * 4) % 2) ? '#ff3b4a' : '#ffffff'; g.fillText('! ! !   TRY AGAIN ($99)   ! ! !', w / 2, 400);
+  } else {
+    g.fillStyle = '#6f8aa8'; g.font = 'bold 24px monospace'; g.fillText('ACCOUNT', 20, 36);
+    g.fillStyle = '#9fb4cc'; g.font = '26px monospace'; g.fillText('Balance', 20, 90); g.fillText('Equity', 20, 130);
+    const bal = t < 10.7 ? 10000 : 9900; g.fillStyle = '#fff'; g.font = 'bold 30px monospace'; g.textAlign = 'right'; g.fillText('$' + bal.toFixed(2).replace(/\B(?=(\d{3})+\.)/g, ','), w - 20, 90);
+    g.fillStyle = eq < bal - 1 ? '#ef4b57' : '#21c17a'; g.fillText('$' + eq.toFixed(2).replace(/\B(?=(\d{3})+\.)/g, ','), w - 20, 130);
+    g.textAlign = 'left'; g.fillStyle = '#1b2538'; g.fillRect(0, 160, w, 3);
+    g.fillStyle = '#6f8aa8'; g.font = 'bold 22px monospace'; g.fillText('POSITIONS', 20, 200);
+    g.font = '24px monospace';
+    const rows = [];
+    if (t >= 8.4 && t < 10.7) rows.push(['BUY 0.10', 100 - 0, (priceAt(t) - 100) * 100]);
+    if (t >= 11.9 && t < 15.6) rows.push(['BUY 0.50', 99.6, (priceAt(t) - 99.6) * 500]);
+    if (t >= 15.6) rows.push(['BUY 2.50', 97.6, (priceAt(t) - 97.6) * 2500]);
+    rows.forEach((r, i) => { g.fillStyle = '#cfe0f5'; g.fillText(r[0] + '  @' + r[1].toFixed(1), 20, 245 + i * 40); g.fillStyle = r[2] < 0 ? '#ef4b57' : '#21c17a'; g.textAlign = 'right'; g.fillText((r[2] < 0 ? '-$' : '+$') + Math.abs(r[2]).toFixed(0), w - 20, 245 + i * 40); g.textAlign = 'left'; });
+    g.fillStyle = '#6f8aa8'; g.font = '22px monospace'; g.fillText(t < 11.9 ? 'RISK PER TRADE: 1%' : (t < 15.6 ? 'RISK PER TRADE: 1%*' : 'RISK PER TRADE: YES'), 20, h - 24);
+  }
+  g.textAlign = 'left'; sc.t.needsUpdate = true;
+}
+
+
